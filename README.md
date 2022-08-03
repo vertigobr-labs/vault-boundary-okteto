@@ -93,9 +93,10 @@ boundary authenticate password \
     -password=$BOUNDARY_PASSWORD
 ```
 
-A Vault UI estará disponível em:
+As UIs do Vault e do Boundary estarão disponíveis em:
 
 https://vault-<namespace>.cloud.okteto.net/ui
+https://boundary-<namespace>.cloud.okteto.net/ui
 
 ## Observações
 

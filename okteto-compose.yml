@@ -77,7 +77,7 @@ services:
     ports:
       - 9200:9200
       # - 9201:9201
-      # - 9202:9202
+      - 9202:9202
     environment:
       - VAULT_ADDR=http://vault:8200
       - BOUNDARY_POSTGRES_URL=postgresql://boundary:boundary@postgres:5432/boundary?sslmode=disable
@@ -103,6 +103,12 @@ services:
     volumes:
       - boundarydb:/var/lib/postgresql/data
 
+  # exemplos de serviços de teste (não estão expostos diretamente)
+  test-whoami:
+    image: containous/whoami
+  test-sshd:
+    image: vertigo/tiny-sshd:alpine
+
 volumes:
   boundarydb:
   # volume compartilhado para simplificar start
@@ -120,3 +126,7 @@ endpoints:
     - path: /
       service: boundary
       port: 9200
+  worker:
+    - path: /
+      service: boundary
+      port: 9202
