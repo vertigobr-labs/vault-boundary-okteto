@@ -1,0 +1,122 @@
+#
+# Executa e inicializa ambos Vault e Boundary já inicializados e integrados.
+# Mais detalhes no README.
+#
+# Uso:
+# okteto context use https://cloud.okteto.com
+# okteto kubeconfig
+# okteto deploy -f okteto-compose.yml
+#
+services:
+  vault:
+    image: hashicorp/vault:1.11.2
+    ports:
+      - 8200:8200
+    environment:
+      VAULT_API_ADDR: http://0.0.0.0:8200
+      VAULT_LOCAL_CONFIG: >
+        {
+          "storage": {
+            "file": {"path": "/vault/file"}
+          },
+          "listener": [{
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "tls_disable": "true"
+            }
+          }],
+          "disable_mlock": "true",
+          "default_lease_ttl": "168h",
+          "max_lease_ttl": "720h",
+          "ui": "true"
+        }
+    command: server
+    volumes:
+      - vault_file:/vault
+
+  vault-init:
+    image: hashicorp/vault:1.11.2
+    environment:
+      - VAULT_ADDR=http://vault:8200
+    command: sh -c "cp /opt/vault/vault-init.sh /tmp/vault-init.sh && chmod +x /tmp/vault-init.sh && /tmp/vault-init.sh"
+    volumes:
+      - vault_data:/vault
+      - ./vault-init:/opt/vault/
+    depends_on:
+      vault:
+        condition: service_started
+    deploy:
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  boundary-init:
+    image: hashicorp/boundary:0.9
+    environment:
+      - BOUNDARY_POSTGRES_URL=postgresql://boundary:boundary@postgres:5432/boundary?sslmode=disable
+    command: sh -c "cp /boundary/boundary-init.sh /tmp/boundary-init.sh && chmod +x /tmp/boundary-init.sh && /tmp/boundary-init.sh"
+    volumes:
+      - vault_data:/vault
+      - ./boundary-init:/boundary/
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_started
+      vault-init:
+        condition: service_completed_successfully
+    deploy:
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+
+  boundary:
+    image: hashicorp/boundary:0.9
+    # build:
+    #   context: .
+    #   dockerfile: ./boundary-mod/Dockerfile
+    ports:
+      - 9200:9200
+      # - 9201:9201
+      # - 9202:9202
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - BOUNDARY_POSTGRES_URL=postgresql://boundary:boundary@postgres:5432/boundary?sslmode=disable
+    command: sh -c "cp /boundary/boundary-start.sh /tmp/boundary-start.sh && chmod +x /tmp/boundary-start.sh && /tmp/boundary-start.sh"
+    volumes:
+      - vault_data:/vault
+      - ./boundary-init:/boundary/
+    restart: on-failure
+    depends_on:
+      boundary-init:
+        condition: service_completed_successfully
+      vault-init:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:14
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=boundary
+      - POSTGRES_USER=boundary
+      - POSTGRES_PASSWORD=boundary
+    volumes:
+      - boundarydb:/var/lib/postgresql/data
+
+volumes:
+  boundarydb:
+  # volume compartilhado para simplificar start
+  # nao faça isso em PROD!
+  vault_data:
+  vault_file:
+  # vault_key:
+
+endpoints:
+  vault:
+    - path: /
+      service: vault
+      port: 8200
+  boundary:
+    - path: /
+      service: boundary
+      port: 9200

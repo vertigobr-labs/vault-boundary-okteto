@@ -1,0 +1,110 @@
+#
+# Executa e inicializa ambos Vault e Boundary já inicializados e integrados.
+# Mais detalhes no README.
+#
+# Para iniciar ("-d" opcional para background):
+# docker-compose up -d
+#
+# Para desligar:
+# docker-compose down
+#
+version: '2'
+
+services:
+  vault:
+    image: hashicorp/vault:1.11.2
+    ports:
+      - 8200:8200
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_API_ADDR: http://0.0.0.0:8200
+      VAULT_LOCAL_CONFIG: >
+        {
+          "storage": {
+            "file": {"path": "/vault/file"}
+          },
+          "listener": [{
+            "tcp": {
+              "address": "0.0.0.0:8200",
+              "tls_disable": "true"
+            }
+          }],
+          "disable_mlock": "true",
+          "default_lease_ttl": "168h",
+          "max_lease_ttl": "720h",
+          "ui": "true"
+        }
+    command: server
+    volumes:
+      - vault_log:/vault/logs
+      - vault_file:/vault/file
+
+  vault-init:
+    image: hashicorp/vault:1.11.2
+    environment:
+      - VAULT_ADDR=http://vault:8200
+    command: sh -c "cp /opt/vault/vault-init.sh /tmp/vault-init.sh && chmod +x /tmp/vault-init.sh && /tmp/vault-init.sh"
+    volumes:
+      - ./vault-init:/opt/vault/
+      - vault_key:/vault/key
+    restart: on-failure
+    depends_on:
+      vault:
+        condition: service_started
+
+  boundary-init:
+    image: hashicorp/boundary:0.9
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - BOUNDARY_POSTGRES_URL=postgresql://boundary:boundary@postgres:5432/boundary?sslmode=disable
+      #- VAULT_TOKEN=${VAULT_DEV_ROOT_TOKEN_ID} # poderia usar "Token para o Boundary KMS"
+    #command: boundary database init -skip-auth-method-creation -skip-host-resources-creation -skip-scopes-creation -skip-target-creation -config /boundary/config.hcl
+    command: sh -c "cp /boundary/boundary-init.sh /tmp/boundary-init.sh && chmod +x /tmp/boundary-init.sh && /tmp/boundary-init.sh"
+    volumes:
+      - ./boundary-init:/boundary/
+      - vault_key:/vault/key:ro
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_started
+      vault-init:
+        condition: service_completed_successfully
+
+  boundary:
+    image: hashicorp/boundary:0.9
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - 9200:9200
+      - 9201:9201
+      - 9202:9202
+    environment:
+      - VAULT_ADDR=http://vault:8200
+      - BOUNDARY_POSTGRES_URL=postgresql://boundary:boundary@postgres:5432/boundary?sslmode=disable
+    command: sh -c "cp /boundary/boundary-start.sh /tmp/boundary-start.sh && chmod +x /tmp/boundary-start.sh && /tmp/boundary-start.sh"
+    volumes:
+      - ./boundary-init:/boundary/
+      - vault_key:/vault/key:ro
+    restart: on-failure
+    depends_on:
+      boundary-init:
+        condition: service_completed_successfully
+
+  postgres:
+    image: postgres:14
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=boundary
+      - POSTGRES_USER=boundary
+      - POSTGRES_PASSWORD=boundary
+    volumes:
+      - boundarydb:/var/lib/postgresql/data
+
+volumes:
+  boundarydb:
+  vault_log:
+  vault_file:
+  vault_key:
